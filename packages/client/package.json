@@ -1,0 +1,20 @@
+{
+  "name": "@azurekiln/moderation-client",
+  "version": "0.1.0",
+  "description": "App-scoped Azurekiln moderation client with fail-closed checks",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "./index.cjs",
+  "module": "./index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.js",
+      "require": "./index.cjs"
+    }
+  },
+  "files": ["index.cjs", "index.js", "index.d.ts", "README.md"],
+  "engines": { "node": ">=18" },
+  "scripts": { "test": "node --test test/*.test.cjs" }
+}

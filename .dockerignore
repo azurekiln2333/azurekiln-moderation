@@ -1,0 +1,16 @@
+.git
+.trellis
+node_modules
+**/node_modules
+test
+packages/client/test
+var
+*.sqlite
+*.sqlite-*
+*.tgz
+.env
+.env.*
+**/*.key
+**/*.pem
+coverage
+npm-debug.log*
