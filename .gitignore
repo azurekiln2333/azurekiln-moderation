@@ -1,0 +1,9 @@
+node_modules/
+var/
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite-*
+*.tgz
+coverage/

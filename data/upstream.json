@@ -1,0 +1,29 @@
+{
+  "repository": "https://github.com/fwwdn/sensitive-stop-words",
+  "revision": "a7d06bb1c321e669943b6841570d9da6dad8ce2b",
+  "license": "Apache-2.0",
+  "modification": "Split CSV/lines, trimmed, categorized, deduplicated, added local phrases",
+  "sources": [
+    {
+      "path": "政治类.txt",
+      "category": "politics",
+      "sha256": "bb4079468345a5ed1e630c82a43ab947828ae2c263e8702a6432bfe253d70f90"
+    },
+    {
+      "path": "色情类.txt",
+      "category": "pornography",
+      "sha256": "2f846d586eb3f0099b1fbb53b0afee0148f09e4394912162b31eb02aee7db1d2"
+    },
+    {
+      "path": "涉枪涉爆违法信息关键词.txt",
+      "category": "weapons",
+      "sha256": "82a319f9d2c03e6033ce51b15e03d0a18396c09d24998212c578d3056bba0dd4"
+    },
+    {
+      "path": "广告.txt",
+      "category": "advertising",
+      "sha256": "5978fb1c0f47e8849215c586682a3447a22990db0dc5ae17c1a5d07302ad4eb1"
+    }
+  ],
+  "entries": 1178
+}

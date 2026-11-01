@@ -6,7 +6,7 @@ Independent, app-isolated content moderation service. This README is the v1 API 
 
 | Owner | Exclusive paths |
 | --- | --- |
-| W1-core | README.md, package.json, package-lock.json, .gitignore, src/app.js, src/server.js, src/auth.js, src/db.js, src/errors.js, src/validation.js, src/audit.js, src/text/**, src/ip/**, migrations/**, data/**, scripts/**, test/core/** |
+| W1-core | README.md, package.json, package-lock.json, .gitignore, .trellis/spec/**, src/app.js, src/server.js, src/auth.js, src/db.js, src/errors.js, src/validation.js, src/audit.js, src/text/**, src/ip/**, migrations/**, data/**, scripts/**, test/core/** |
 | W1-ext | src/image/**, src/review/**, src/reports/**, packages/client/**, deploy/**, test/ext/**, Dockerfile, compose.yaml, .dockerignore |
 
 Only core edits shared root package files and this README. Ext records deployment details in `deploy/README.md` and requests shared changes from core. Modules own their schema migrations inside their exclusive paths. Do not edit or stage the other worker's files.
@@ -75,7 +75,7 @@ Duplicate normalized words in the same app/category return 409. Mutations become
 - `PATCH /v1/admin/ip-rules/:id {type?,value?,reason?,enabled?}` updates a rule.
 - `DELETE /v1/admin/ip-rules/:id` deletes a rule.
 
-`reason` has at most 500 characters. Region codes are uppercase strings such as `CN-44`. All rules are deny rules. The default is to allow an IP when no enabled rule matches.
+`reason` has at most 500 characters. Region codes are uppercase strings such as `CN-44`. A country rule such as `CN` also matches its subdivisions, including `CN-44`. All rules are deny rules. The default is to allow an IP when no enabled rule matches.
 
 ## Pre-review policies and queue
 
@@ -94,7 +94,7 @@ Full items additionally contain `appId,userId,ip,payload,actorId`. `kind` is `te
 - `POST /v1/reports {targetType,targetId,reporterId,reason}` creates `201 {id,status:"open",createdAt}`. All four fields are required. `reason` has 1..2000 characters. Reporter IDs have 1..128 characters.
 - `GET /v1/admin/reports?status=open` lists reports. Optional status is `open|accepted|resolved|rejected`.
 - `GET /v1/admin/reports/:id` returns the report and handling history.
-- `POST /v1/admin/reports/:id/handle {status:"accepted"|"resolved"|"rejected",result,actorId}` records handling. `result` has 1..2000 characters. `actorId` is required. Terminal reports cannot return to open/accepted. Conflicting terminal updates return 409.
+- `POST /v1/admin/reports/:id/handle {status:"accepted"|"resolved"|"rejected",result,actorId}` records handling. `result` has 1..2000 characters. `actorId` is required. Terminal reports cannot return to open/accepted. Repeating the same terminal status, result, and actor is idempotent. Any conflicting terminal payload returns 409.
 
 Reports and handling events are app scoped and retained for at least 365 days. Content deletion stays with the consuming application's administrator; this service records the report and outcome.
 
@@ -141,7 +141,7 @@ const report = await moderation.submitReport({ targetType: 'post', targetId, rep
 const review = await moderation.getReview(reviewId);
 ```
 
-Other method: `checkImage(body)`. The SDK uses AbortController timeouts, validates check-result decisions, and preserves HTTP error codes. With `failClosed:true` (default), network failures, timeouts, and invalid check responses throw `ModerationUnavailableError` with `code:"moderation.unavailable"`, `status:503`, `message:"审核服务暂不可用"`. `failClosed:false` returns a synthetic `decision:"review"` result with `unavailable:true`, never pass. Non-check methods always throw on failure. TLS verification remains enabled. Production uses HTTPS or an explicitly trusted private network.
+Other method: `checkImage(body)`. The SDK uses AbortController timeouts and validates check-result decisions. HTTP 4xx errors preserve their status and code. With `failClosed:true` (default), network failures, timeouts, HTTP 5xx, and invalid check responses throw `ModerationUnavailableError` with `code:"moderation.unavailable"`, `status:503`, `message:"审核服务暂不可用"`. HTTP 5xx details remain in `upstreamStatus`, `upstreamCode`, and `cause`. `failClosed:false` returns a synthetic `decision:"review"` result with `unavailable:true`, never pass. Non-check methods always throw on failure. TLS verification remains enabled. Production uses HTTPS or an explicitly trusted private network.
 
 Distribution: run `npm pack --workspace packages/client --pack-destination <temporary-output-dir>`. Copy the resulting `.tgz` into each consuming repository's `vendor/` directory; commit it there and reference `file:vendor/<tarball>.tgz` in that consumer's lockfile. Its Docker context must include `vendor/`. Do not depend on sibling repository paths or an unpublished registry package. Ext may additionally supply unpacked vendoring if an existing consumer convention requires it.
 
