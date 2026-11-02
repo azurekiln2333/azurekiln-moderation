@@ -1,0 +1,29 @@
+# Linux CI. Validation runs again inside each trusted publishing job.
+# Docker service authenticates to CNB; no registry secret is read by this file.
+main:
+  push:
+    - name: verify-and-publish
+      docker:
+        image: node:24.15.0-bookworm
+      services:
+        - docker
+      stages:
+        - name: test-build-push
+          script: node scripts/publish-ci.mjs main
+  pull_request:
+    - name: verify-only
+      docker:
+        image: node:24.15.0-bookworm
+      stages:
+        - name: test
+          script: node scripts/publish-ci.mjs verify
+"v*":
+  tag_push:
+    - name: verify-and-publish-release
+      docker:
+        image: node:24.15.0-bookworm
+      services:
+        - docker
+      stages:
+        - name: test-build-push
+          script: node scripts/publish-ci.mjs tag
