@@ -2,9 +2,12 @@ import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
 function execute(command, args) {
-  const result = spawnSync(command, args, {
-    stdio: 'inherit', shell: process.platform === 'win32' && command === 'npm',
-  });
+  // npm is a .cmd on Windows. Only fixed npm subcommands may reach cmd.exe.
+  const windowsNpm = process.platform === 'win32' && command === 'npm';
+  if (windowsNpm && args.some(arg => !/^[a-z-]+$/.test(arg))) throw new Error('Unsupported npm CI argument');
+  const result = windowsNpm
+    ? spawnSync('cmd.exe', ['/d', '/s', '/c', ['npm.cmd', ...args].join(' ')], { stdio: 'inherit', windowsHide: true })
+    : spawnSync(command, args, { stdio: 'inherit', windowsHide: true });
   if (result.error || result.status !== 0) throw new Error(`CI command failed: ${command}`);
 }
 
