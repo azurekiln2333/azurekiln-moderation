@@ -451,7 +451,17 @@ export function registerRoutes(router, ctx, options = {}) {
   // ---- 5.3 tenant resources ----------------------------------------------
 
   const tenant = createTenantRouter(ctx, options.modules ?? []);
-  router.use('/apps/:appId', admin.requireSession(), tenant);
+  // Reject unknown or reserved tenants before the shared handlers run, so every
+  // per-application route reports 404 instead of an empty collection.
+  function requireKnownApp(req, _res, next) {
+    const appId = req.params.appId;
+    if (typeof appId !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(appId) || appId === '_system' ||
+        !ctx.appStore.getApp(appId)) {
+      throw ctx.httpError(404, 'not_found', 'App not found');
+    }
+    next();
+  }
+  router.use('/apps/:appId', admin.requireSession(), requireKnownApp, tenant);
 
   // ---- 5.4 admins (super only) -------------------------------------------
 

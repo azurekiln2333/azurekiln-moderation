@@ -119,6 +119,16 @@ test('every tenant resource the console uses is reachable and scoped by appId', 
   assert.equal((await c.call('GET', '/admin/api/apps/beta/audit')).body.total, 0);
   assert.equal((await c.call('GET', '/admin/api/apps/alpha/meta')).status, 404);
   assert.equal((await c.call('GET', '/admin/api/meta')).status, 200);
+
+  // Unknown, reserved, and malformed tenants are rejected rather than served empty.
+  for (const path of ['/admin/api/apps/ghost', '/admin/api/apps/ghost/keywords',
+    '/admin/api/apps/ghost/keys', '/admin/api/apps/ghost/scenes', '/admin/api/apps/ghost/reviews',
+    '/admin/api/apps/ghost/reports', '/admin/api/apps/ghost/audit',
+    '/admin/api/apps/_system/keywords', '/admin/api/apps/with%20space/keywords']) {
+    assert.equal((await c.call('GET', path)).status, 404, path);
+  }
+  assert.equal((await c.call('POST', '/admin/api/apps/ghost/keywords',
+    { word: 'x', category: 'custom' })).status, 404);
 });
 
 test('admin keys minted in the console drive the unchanged /v1 API', async t => {
