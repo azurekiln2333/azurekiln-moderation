@@ -2,7 +2,7 @@
 
 ## 1. Scope / trigger
 
-Applies to `compose.yaml`, `compose.build.yaml`, GitHub/CNB image workflows,
+Applies to `docker-compose.yml`, `docker-compose.build.yml`, GitHub/CNB image workflows,
 and `deploy/README.md`. The root README defines the public deployment contract.
 Keep the sibling QFLI moderation rollout instructions consistent with it.
 
@@ -11,7 +11,7 @@ Keep the sibling QFLI moderation rollout instructions consistent with it.
 ```sh
 docker compose --env-file <credentials.env> --env-file <image.env> config --quiet
 docker compose --env-file <credentials.env> --env-file <image.env> up -d --no-build moderation
-docker compose -f compose.build.yaml --env-file <local.env> up --build -d
+docker compose -f docker-compose.build.yml --env-file <local.env> up --build -d
 node scripts/publish-ci.mjs verify
 ```
 
@@ -20,7 +20,7 @@ when the Docker Compose plugin is unavailable. No daemon is needed for parsing.
 
 ## 3. Contracts
 
-- Production requires `MODERATION_IMAGE` and `MODERATION_APPS_JSON`. It pulls an
+- Production requires `MODERATION_APPS_JSON`; `MODERATION_IMAGE` defaults to the CNB `latest` image. It pulls an
   existing image and has no build directive. Local mode requires only app keys.
 - Fixed host binding is `127.0.0.1`. `MODERATION_PORT` changes only the port.
 - `COMPOSE_PROJECT_NAME` controls container names and the Watchtower scope.
@@ -76,9 +76,9 @@ without connecting to production or reading operator credentials.
 
 ## 7. Wrong vs correct
 
-Wrong: `docker compose -f compose.yaml -f compose.build.yaml up --build`.
+Wrong: `docker compose -f docker-compose.yml -f docker-compose.build.yml up --build`.
 The production watcher's service remains in the merge, and production required
 variables interpolate before merging.
 
-Correct: `docker compose -f compose.build.yaml --env-file <local.env> up --build -d`.
+Correct: `docker compose -f docker-compose.build.yml --env-file <local.env> up --build -d`.
 Use the standalone local file alone to keep automatic updates disabled.

@@ -60,7 +60,7 @@ function checkPersistenceAndPort(model, port, volumeName) {
 }
 
 test('production pulls an image and limits Watchtower to the named, labeled, scoped service', { skip }, () => {
-  const model = resolved('compose.yaml');
+  const model = resolved('docker-compose.yml');
   const service = model.services.moderation;
   const watcher = model.services.watchtower;
   assert.equal(service.image, 'ghcr.io/example/moderation:latest');
@@ -81,8 +81,8 @@ test('production pulls an image and limits Watchtower to the named, labeled, sco
 });
 
 test('another project has distinct watcher selectors, container names, and default storage', { skip }, () => {
-  const first = resolved('compose.yaml', { COMPOSE_PROJECT_NAME: 'moderation-alpha' });
-  const second = resolved('compose.yaml', { COMPOSE_PROJECT_NAME: 'moderation-beta' });
+  const first = resolved('docker-compose.yml', { COMPOSE_PROJECT_NAME: 'moderation-alpha' });
+  const second = resolved('docker-compose.yml', { COMPOSE_PROJECT_NAME: 'moderation-beta' });
   for (const model of [first, second]) {
     const service = model.services.moderation;
     const watcher = model.services.watchtower;
@@ -98,7 +98,7 @@ test('another project has distinct watcher selectors, container names, and defau
 });
 
 test('an existing SQLite volume and a custom loopback port survive configuration changes', { skip }, () => {
-  for (const file of ['compose.yaml', 'compose.build.yaml']) {
+  for (const file of ['docker-compose.yml', 'docker-compose.build.yml']) {
     const model = resolved(file, { MODERATION_DATA_VOLUME: 'existing-moderation-data',
       MODERATION_PORT: '14310' });
     checkPersistenceAndPort(model, 14310, 'existing-moderation-data');
@@ -106,7 +106,7 @@ test('an existing SQLite volume and a custom loopback port survive configuration
 });
 
 test('standalone local mode builds without registry settings and has no automatic updater', { skip }, () => {
-  const model = resolved('compose.build.yaml', { MODERATION_IMAGE: '' });
+  const model = resolved('docker-compose.build.yml', { MODERATION_IMAGE: '' });
   assert.deepEqual(Object.keys(model.services), ['moderation']);
   assert.equal(model.name, 'azurekiln-moderation-local');
   assert.equal(model.services.moderation.image, 'azurekiln-moderation:local');
@@ -116,13 +116,13 @@ test('standalone local mode builds without registry settings and has no automati
   checkPersistenceAndPort(model, 4310, 'azurekiln-moderation-local-data');
 });
 
-test('both modes reject missing app credentials and production requires a published image', { skip }, () => {
-  for (const file of ['compose.yaml', 'compose.build.yaml']) {
+test('both modes reject missing app credentials and production defaults to the CNB image', { skip }, () => {
+  for (const file of ['docker-compose.yml', 'docker-compose.build.yml']) {
     const result = config(file, { MODERATION_APPS_JSON: '' });
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /MODERATION_APPS_JSON/);
   }
-  const result = config('compose.yaml', { MODERATION_IMAGE: '' });
-  assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /MODERATION_IMAGE/);
+  const model = resolved('docker-compose.yml', { MODERATION_IMAGE: '' });
+  assert.equal(model.services.moderation.image,
+    'docker.cnb.cool/azurekiln/azurekiln-moderation/moderation:latest');
 });

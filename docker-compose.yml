@@ -2,7 +2,7 @@ name: ${COMPOSE_PROJECT_NAME:-azurekiln-moderation}
 
 services:
   moderation:
-    image: ${MODERATION_IMAGE:?Set a tested published image tag or digest}
+    image: ${MODERATION_IMAGE:-docker.cnb.cool/azurekiln/azurekiln-moderation/moderation:latest}
     container_name: ${COMPOSE_PROJECT_NAME:-azurekiln-moderation}-moderation
     restart: unless-stopped
     init: true

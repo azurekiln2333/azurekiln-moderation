@@ -30,30 +30,35 @@ independently, so record the digest of the selected registry's actual image.
 
 ## Production container
 
-Install Docker Engine and Compose v2 on the deployment host. From this repository:
+Install Docker Engine and Compose v2 on the deployment host. Put `docker-compose.yml`
+and `.env.example` in one directory (or use this repository), then create `.env`
+from the template. Compose reads `.env` from that directory automatically:
 
 ```sh
-docker compose --env-file /etc/azurekiln/moderation.env --env-file /etc/azurekiln/moderation.image.env config --quiet
-docker compose --env-file /etc/azurekiln/moderation.env --env-file /etc/azurekiln/moderation.image.env pull
-docker compose --env-file /etc/azurekiln/moderation.env --env-file /etc/azurekiln/moderation.image.env run --rm --no-deps moderation node scripts/migrate.mjs
-docker compose --env-file /etc/azurekiln/moderation.env --env-file /etc/azurekiln/moderation.image.env up -d --wait --wait-timeout 90 --no-build moderation
-docker compose --env-file /etc/azurekiln/moderation.env --env-file /etc/azurekiln/moderation.image.env ps
+cp .env.example .env && chmod 600 .env   # fill in MODERATION_APPS_JSON
+docker compose config --quiet
+docker compose pull
+docker compose run --rm --no-deps moderation node scripts/migrate.mjs
+docker compose up -d --wait --wait-timeout 90 --no-build moderation
+docker compose ps
 ```
 
-An operator must create `/etc/azurekiln/moderation.env` outside the repository,
-restrict it to the deployment account, and supply `MODERATION_APPS_JSON`.
+`.env` must be readable only by the deployment account and must supply
+`MODERATION_APPS_JSON`.
 Its value is a JSON array of `{appId,apiKey,adminKey}`. Generate distinct random
 keys with at least 32 characters. Provision QFLI and gateway as separate apps
 unless the consuming team explicitly intends them to share policies and data.
 Do not print resolved Compose configuration or environment values into logs.
 
-Create `/etc/azurekiln/moderation.image.env` with the selected published
-`MODERATION_IMAGE`, such as `ghcr.io/<owner>/<repository>:latest`. Protect this
-file too. Production Compose has no build directive. It never builds source.
+`MODERATION_IMAGE` defaults to the CNB image
+`docker.cnb.cool/azurekiln/azurekiln-moderation/moderation:latest`. Set it in `.env`
+to use `ghcr.io/azurekiln2333/azurekiln-moderation:latest` or to pin a digest.
+To keep secrets outside the deployment directory, pass `--env-file <path>` to
+every command instead. Production Compose has no build directive. It never builds source.
 
 | Variable | Default / purpose |
 | --- | --- |
-| `MODERATION_IMAGE` | Required published tag or digest; select GHCR or CNB |
+| `MODERATION_IMAGE` | `docker.cnb.cool/azurekiln/azurekiln-moderation/moderation:latest`; override with a GHCR tag or a digest |
 | `COMPOSE_PROJECT_NAME` | `azurekiln-moderation`; also sets scope and container names |
 | `MODERATION_PORT` | `4310`; binding remains `127.0.0.1` |
 | `MODERATION_DATA_VOLUME` | `<project>-data`; preserve an existing volume when upgrading |
@@ -82,7 +87,7 @@ It polls every 600 seconds and removes replaced images, while retaining the
 database volume. After health and authenticated smoke checks pass, enable it:
 
 ```sh
-docker compose --env-file /etc/azurekiln/moderation.env --env-file /etc/azurekiln/moderation.image.env up -d --no-build watchtower
+docker compose up -d --no-build watchtower
 ```
 
 Use a moving tag such as `latest` to receive new images. A digest or revision tag
@@ -95,8 +100,8 @@ credential using `docker login --password-stdin`. Host login alone does not give
 the watcher credentials. Create a protected directory
 `/etc/azurekiln/moderation-registry` containing a minimal Docker `config.json`
 with that registry's auth. Do not use a config that depends on an uninstalled
-credential helper. Add this host-only `compose.override.yaml` next to the
-production `compose.yaml`; default Compose commands load it automatically:
+credential helper. Add this host-only `docker-compose.override.yml` next to the
+production `docker-compose.yml`; default Compose commands load it automatically:
 
 ```yaml
 services:
@@ -120,7 +125,7 @@ this host override out of Git.
 Stop only this project's watcher before backup, migrations, or rollback:
 
 ```sh
-docker compose --env-file /etc/azurekiln/moderation.env --env-file /etc/azurekiln/moderation.image.env stop watchtower
+docker compose stop watchtower
 ```
 
 Preserve the selected image digest/revision and a restorable database backup.
@@ -133,8 +138,8 @@ automatic updates only after the relevant backup and acceptance checks pass.
 Use the standalone file **alone**, with synthetic/local app credentials:
 
 ```sh
-docker compose -f compose.build.yaml --env-file /path/to/local-moderation.env config --quiet
-docker compose -f compose.build.yaml --env-file /path/to/local-moderation.env up --build -d
+docker compose -f docker-compose.build.yml --env-file /path/to/local-moderation.env config --quiet
+docker compose -f docker-compose.build.yml --env-file /path/to/local-moderation.env up --build -d
 ```
 
 No `MODERATION_IMAGE` is required. This builds `azurekiln-moderation:local`, sets
@@ -234,7 +239,7 @@ This avoids sibling-checkout and unpublished-registry dependencies.
 
 Before an upgrade, run `npm test` and `npm run lint`, pause Watchtower, and back
 up the database with the retention policy applied. Pull the tested published
-image, recreate the service, and run the smoke test. Use `compose.build.yaml`
+image, recreate the service, and run the smoke test. Use `docker-compose.build.yml`
 only for local builds. The initial
 schema is additive. Preserve a compatible database backup before a future
 schema change; do not assume older images understand newer schema versions.
