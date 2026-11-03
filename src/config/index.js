@@ -52,6 +52,8 @@ export function initializeConfig(ctx) {
       VALUES (?1, ?2, 'System', 'disabled', ?2)`).run(SYSTEM_APP_ID, now);
   });
   ctx.appStore = createAppStore(ctx);
+  // Convenience hook used by the admin API after key/app mutations.
+  ctx.invalidateAudienceCache = appId => ctx.appStore.invalidateAudienceCache(appId);
   ctx.provisionAppKeywords = appId => ctx.provisionKeywords?.(appId);
   ctx.config = {
     setupState: () => setupState(ctx),
