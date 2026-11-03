@@ -1,7 +1,5 @@
 import express from 'express';
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { authenticate, requireAdmin } from './auth.js';
 import { openDatabase, migrate, migrateCore, transaction } from './db.js';
 import { cleanup, createAudit, registerAuditRoutes } from './audit.js';
@@ -12,25 +10,6 @@ import { registerTextRoutes } from './text/index.js';
 import { registerIpRoutes } from './ip/index.js';
 import { ensureSetupCode } from './admin-auth.js';
 import { initializeConfig, importLegacyApps } from './config/index.js';
-
-const ADMIN_ASSETS = fileURLToPath(new URL('../public/admin/', import.meta.url));
-const SVG_ICON = 'data:image/svg+xml';
-
-function contentSecurityPolicy(res) {
-  res.set('X-Content-Type-Options', 'nosniff');
-  res.set('Referrer-Policy', 'no-referrer');
-  res.set('X-Frame-Options', 'DENY');
-  res.set('Content-Security-Policy', [
-    "default-src 'self'",
-    `img-src 'self' ${SVG_ICON}`,
-    "style-src 'self'",
-    "script-src 'self'",
-    "connect-src 'self'",
-    "form-action 'self'",
-    "frame-ancestors 'none'",
-    "base-uri 'none'"
-  ].join('; '));
-}
 
 async function loadAdminModules() {
   // B owns src/admin/. The directory may be absent while branches develop in parallel.
@@ -124,11 +103,9 @@ export async function createApp(options = {}) {
         module.registerRoutes(adminRouter, ctx, { modules: serviceModules });
       }
       app.use('/admin/api', adminRouter);
-      if (existsSync(ADMIN_ASSETS)) {
-        app.use('/admin', express.static(ADMIN_ASSETS, {
-          index: 'index.html', dotfiles: 'ignore', fallthrough: true, setHeaders: contentSecurityPolicy
-        }));
-      }
+      // The web console owns its own static serving and hardening headers.
+      const { registerAdminUi } = await import('./admin-ui/index.js');
+      registerAdminUi(app, ctx);
     }
 
     app.use((_req, _res, next) => next(httpError(404, 'not_found', 'Route not found')));
