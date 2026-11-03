@@ -9,9 +9,10 @@
     "start": "node src/server.js",
     "migrate": "node scripts/migrate.mjs",
     "lint": "node scripts/check.mjs",
-    "test": "node --test test/core/*.test.js test/ext/*.test.js packages/client/test/*.test.cjs",
+    "test": "node --test test/core/*.test.js test/ext/*.test.js test/admin/*.test.js packages/client/test/*.test.cjs",
     "test:core": "node --test test/core/*.test.js",
     "test:ext": "node --test test/ext/*.test.js",
+    "test:admin": "node --test test/admin/*.test.js",
     "test:client": "node --test packages/client/test/*.test.cjs",
     "data:import": "node scripts/import-words.mjs"
   },
