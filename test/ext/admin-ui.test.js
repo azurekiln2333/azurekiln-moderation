@@ -147,7 +147,7 @@ test('the bundle never embeds credentials and only talks to the documented API b
 
 test('pages cover every administrative area required by the design', () => {
   const api = readAsset('js/api.js');
-  for (const path of ['/bootstrap', '/login', '/apps', '/keys', '/keywords', '/ip-rules', '/scenes',
+  for (const path of ['/setup', '/session', '/apps', '/keys', '/keywords', '/ip-rules', '/scenes',
     '/reviews', '/reports', '/audit', '/admins']) {
     assert.ok(api.includes(`'${path}`) || api.includes(`/${path.slice(1)}`), `api.js is missing ${path}`);
   }
@@ -179,28 +179,32 @@ test('the API client attaches the CSRF token to unsafe methods and drops it on 4
       { status: next.status, headers: { 'Content-Type': 'application/json' } });
   };
   try {
-    const { api, request, ENDPOINTS, setCsrfToken, getCsrfToken, ApiError } = await import('../../public/admin/js/api.js');
-    // First unsafe call bootstraps the token from GET /csrf.
-    responses.push({ status: 200, body: { csrfToken: 'csrf-1' } });
-    responses.push({ status: 201, body: { id: 'app-1' } });
+    const { api, request, ENDPOINTS, setCsrfToken, getCsrfToken, setCurrentApp, ApiError } =
+      await import('../../public/admin/js/api.js');
+    // The token is published by the session endpoint; a write without it sends no header.
     setCsrfToken(null);
+    responses.push({ status: 201, body: { app: { appId: 'alpha' } } });
     const created = await api.createApp({ appId: 'alpha' });
-    assert.equal(created.id, 'app-1');
-    assert.equal(calls[0].url, 'http://127.0.0.1:4310/admin/api/csrf');
-    assert.equal(calls[1].url, 'http://127.0.0.1:4310/admin/api/apps');
-    assert.equal(calls[1].init.method, 'POST');
-    assert.equal(calls[1].init.credentials, 'same-origin');
-    assert.equal(calls[1].init.headers['X-CSRF-Token'], 'csrf-1');
-    assert.equal(calls[1].init.headers['Content-Type'], 'application/json');
-
-    // Safe methods never send a CSRF header.
-    calls.length = 0;
-    responses.push({ status: 200, body: { items: [] } });
-    await api.listApps({ limit: 10, offset: 0, q: 'alpha' });
+    assert.deepEqual(created, { app: { appId: 'alpha' } });
+    assert.equal(calls[0].url, 'http://127.0.0.1:4310/admin/api/apps');
+    assert.equal(calls[0].init.method, 'POST');
+    assert.equal(calls[0].init.credentials, 'same-origin');
     assert.equal(calls[0].init.headers['X-CSRF-Token'], undefined);
-    assert.match(calls[0].url, /limit=10&offset=0&q=alpha$/u);
+    assert.equal(calls[0].init.headers['Content-Type'], 'application/json');
 
-    // A 401 clears the cached token so the next write re-fetches it.
+    // With a token every unsafe call carries it.
+    calls.length = 0;
+    setCsrfToken('csrf-1');
+    responses.push({ status: 200, body: { items: [], total: 0, limit: 10, offset: 0 } });
+    await api.listApps({ limit: 10, offset: 0, q: 'alpha' });
+    assert.equal(calls[0].init.headers['X-CSRF-Token'], undefined, 'safe methods never send a token');
+    assert.match(calls[0].url, /limit=10&offset=0&q=alpha$/u);
+    calls.length = 0;
+    responses.push({ status: 201, body: {} });
+    await api.createApp({ appId: 'beta' });
+    assert.equal(calls[0].init.headers['X-CSRF-Token'], 'csrf-1');
+
+    // A 401 clears the cached token.
     responses.push({ status: 401, body: { error: 'unauthorized', message: 'Login required', requestId: 'req-1' } });
     await assert.rejects(() => api.logout(), error => {
       assert.ok(error instanceof ApiError);
@@ -211,11 +215,29 @@ test('the API client attaches the CSRF token to unsafe methods and drops it on 4
     });
     assert.equal(getCsrfToken(), null);
 
-    // Route builders must encode operator input.
+    // Route builders must encode operator input and scope tenant resources.
     assert.equal(ENDPOINTS.app('a b/c'), '/apps/a%20b%2Fc');
-    assert.equal(ENDPOINTS.revokeKey('app', 'api', 'k/1'), '/apps/app/keys/api/k%2F1/revoke');
+    assert.equal(ENDPOINTS.keyword('app 1', 'k/2'), '/apps/app%201/keywords/k%2F2');
+    assert.equal(ENDPOINTS.scene('app', 'po st'), '/apps/app/scenes/po%20st');
+    assert.throws(() => { setCurrentApp(null); api.listKeywords(); }, error => error.code === 'no_app_selected');
+    setCurrentApp('app-1');
+    calls.length = 0;
+    responses.push({ status: 200, body: { items: [], total: 0, limit: 50, offset: 0 } });
+    await api.listKeywords({ limit: 50 });
+    assert.equal(calls[0].url, 'http://127.0.0.1:4310/admin/api/apps/app-1/keywords?limit=50');
+
+    // The session payload is normalised for the views.
+    calls.length = 0;
+    responses.push({ status: 200, body: { admin: { username: 'root', role: 'super' }, csrfToken: 'csrf-2',
+      expiresAt: '2026-11-04T00:00:00.000Z' } });
+    responses.push({ status: 200, body: { items: [{ appId: 'app-1' }], total: 1, limit: 50, offset: 0 } });
+    const session = await api.session();
+    assert.equal(session.username, 'root');
+    assert.equal(session.role, 'super');
+    assert.deepEqual(session.apps, [{ appId: 'app-1' }]);
+    assert.equal(getCsrfToken(), 'csrf-2');
+
     // An error from a write is surfaced without a cached token surviving.
-    responses.push({ status: 200, body: { csrfToken: 'csrf-2' } });
     responses.push({ status: 400, body: { error: 'invalid_request', message: 'appId is required' } });
     await assert.rejects(() => request(ENDPOINTS.apps, { method: 'POST', body: {} }),
       error => error.code === 'invalid_request' && /appId is required/u.test(error.message));

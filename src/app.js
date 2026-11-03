@@ -13,7 +13,7 @@ import { registerIpRoutes } from './ip/index.js';
 import { ensureSetupCode } from './admin-auth.js';
 import { initializeConfig, importLegacyApps } from './config/index.js';
 
-const ADMIN_ASSETS = fileURLToPath(new URL('../public/', import.meta.url));
+const ADMIN_ASSETS = fileURLToPath(new URL('../public/admin/', import.meta.url));
 const SVG_ICON = 'data:image/svg+xml';
 
 function contentSecurityPolicy(res) {
@@ -108,12 +108,21 @@ export async function createApp(options = {}) {
     if (adminModules.length) {
       const adminRouter = express.Router();
       adminRouter.use((req, _res, next) => {
-        if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) && !req.is('application/json')) {
+        // A DELETE without a body is legitimate (the console uses it for deletes),
+        // so only demand JSON when a payload is actually sent.
+        const sendsBody = req.headers['content-length'] !== undefined || req.headers['transfer-encoding'] !== undefined;
+        const requiresJson = ['POST', 'PUT', 'PATCH'].includes(req.method) ||
+          (req.method === 'DELETE' && sendsBody);
+        if (requiresJson && !req.is('application/json')) {
           throw httpError(415, 'unsupported_media_type', 'Content-Type application/json required');
         }
         next();
       }, express.json({ limit: '256kb', strict: true }));
-      for (const module of adminModules) module.registerRoutes(adminRouter, ctx);
+      for (const module of adminModules) {
+        // The tenant routes under /admin/api/apps/:appId reuse the review, image, and
+        // reports registrations, so the service modules are handed over as well.
+        module.registerRoutes(adminRouter, ctx, { modules: serviceModules });
+      }
       app.use('/admin/api', adminRouter);
       if (existsSync(ADMIN_ASSETS)) {
         app.use('/admin', express.static(ADMIN_ASSETS, {

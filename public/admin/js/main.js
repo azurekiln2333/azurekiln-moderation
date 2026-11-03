@@ -2,7 +2,7 @@
 // The bundle is static; every privileged call goes through js/api.js.
 
 import { el, clear, toast } from './dom.js';
-import { api, refreshCsrf, setCsrfToken, ApiError } from './api.js';
+import { api, refreshCsrf, setCsrfToken, setCurrentApp, ApiError } from './api.js';
 import { route, setNotFound, setNavigateHook, start, navigate, highlightNav } from './router.js';
 import { errorBox } from './dom.js';
 import { initView, loginView, passwordView } from './views/auth.js';
@@ -63,6 +63,7 @@ function setWhoami(session) {
   }
   const app = apps.find(item => (item.appId ?? item.id) === shell.appId);
   shell.ctx = { appId: shell.appId, app, session };
+  setCurrentApp(shell.appId);
 }
 
 async function loadSession() {
@@ -72,7 +73,7 @@ async function loadSession() {
     const apps = Array.isArray(session?.apps) ? session.apps : [];
     shell.appId = shell.appId ?? apps[0]?.appId ?? apps[0]?.id ?? session?.appId ?? null;
     if (session?.csrfToken) setCsrfToken(session.csrfToken);
-    if (session?.appId && !shell.appId) shell.appId = session.appId;
+    if (shell.appId) setCurrentApp(shell.appId);
     return shell.session;
   } catch (error) {
     shell.session = null;
@@ -119,6 +120,7 @@ export async function boot() {
     try { await api.logout(); } catch { /* the session may already be gone */ }
     shell.session = null;
     shell.appId = null;
+    setCurrentApp(null);
     setWhoami(null);
     navigate('/login', { replace: true });
   });
@@ -126,6 +128,7 @@ export async function boot() {
   const selector = document.getElementById('app-select');
   selector.addEventListener('change', () => {
     shell.appId = selector.value;
+    setCurrentApp(shell.appId);
     setWhoami(shell.session);
     navigate('/apps', { replace: true });
   });
