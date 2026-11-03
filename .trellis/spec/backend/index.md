@@ -3,6 +3,17 @@
 Read [moderation-contract.md](./moderation-contract.md) and the root README before changing a public API, tenant-scoped query, migration, retention handler, or module boundary.
 Read [deployment.md](./deployment.md) before changing Compose, image publication,
 deployment environment wiring, or update/rollback instructions.
+Read [../../../docs/proposals/dynamic-config-contract.md](../../../docs/proposals/dynamic-config-contract.md)
+before changing the database-backed configuration layer, the `/admin` API surface,
+or the setup/reset flow.
+
+## Zero-secret deployment
+
+Applications, API/admin keys, and administrator accounts live in SQLite and are
+managed at `/admin`. Deployment requires no `.env` and no `MODERATION_APPS_JSON`.
+Only an empty database prints a one-time `moderation.setup_code` log line; recover
+with `docker compose exec moderation node scripts/reset-admin.mjs`. The `/v1/*`
+API, its headers, and its response shapes stay backward compatible.
 
 ## Pre-development checklist
 

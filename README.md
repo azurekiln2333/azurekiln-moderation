@@ -21,7 +21,7 @@ Authorization: Bearer <apiKey>
 Content-Type: application/json
 ```
 
-Provision apps through `MODERATION_APPS_JSON`, an array of `{appId,apiKey,adminKey}`. Keys must be distinct, at least 32 characters, and provided through a secret file/environment. API keys authorize checks, review result queries, and report submission. An app's admin key additionally authorizes `/v1/admin/*`. Each admin key manages only its own app. No cross-app/global-admin endpoint exists. Request bodies never select an app. Forwarded headers do not select a tenant or supply the IP being checked.
+Apps and keys are managed in the database through the `/admin` console; they are no longer provisioned through environment variables. Keys must be distinct, at least 32 characters, and are stored only as hashes. Plaintext is shown once, when a key is issued or rotated, and a rotated key keeps working for a grace window. API keys authorize checks, review result queries, and report submission. An app's admin key additionally authorizes `/v1/admin/*`. Each admin key manages only its own app. No cross-app/global-admin endpoint exists. Request bodies never select an app. Forwarded headers do not select a tenant or supply the IP being checked. A legacy `MODERATION_APPS_JSON` value, when still present, is imported once at startup and then ignored.
 
 IDs are opaque strings. Times are UTC ISO 8601. `scene` is a nonempty string of at most 64 characters. Optional `userId`, `targetType`, and `targetId` strings have at most 128 characters. Optional `metadata` is a JSON object. List APIs return `{items,total,limit,offset}`, with `limit=50` (1..100) and `offset=0` (0..1000000). Resource IDs from another app return 404. Delete returns `200 {deleted:true}`. All successful check responses return HTTP 200, including blocked results:
 
@@ -145,13 +145,41 @@ Other method: `checkImage(body)`. The SDK uses AbortController timeouts and vali
 
 Distribution: run `npm pack --workspace packages/client --pack-destination <temporary-output-dir>`. Copy the resulting `.tgz` into each consuming repository's `vendor/` directory; commit it there and reference `file:vendor/<tarball>.tgz` in that consumer's lockfile. Its Docker context must include `vendor/`. Do not depend on sibling repository paths or an unpublished registry package. Ext may additionally supply unpacked vendoring if an existing consumer convention requires it.
 
+## Administration console
+
+The service serves its own admin console at `/admin`. It manages applications and
+keys, keyword dictionaries, IP/CIDR rules, per-scene pre-review switches, the
+manual review queue, reports, audit queries, and administrator accounts.
+
+```sh
+docker compose up -d
+docker compose logs moderation | grep moderation.setup_code
+```
+
+With an empty database the first start writes a one-time setup code to the
+container log. The database stores only its hash, it expires after 24 hours, and
+it is destroyed when used. Open `/admin/setup`, enter the code, and create the
+super administrator; the setup page then closes permanently. No code is generated
+on later restarts. Reset a forgotten password with:
+
+```sh
+docker compose exec moderation node scripts/reset-admin.mjs
+```
+
+Administrator passwords are stored with scrypt. Sessions use an
+`HttpOnly; Secure; SameSite=Lax` cookie, are revoked on logout or password change,
+and login attempts are rate limited. Optional OIDC login is configured in the
+console and is not exposed at all when unconfigured. The `/v1/*` API, headers, and
+response shapes are unchanged, and the legacy `/v1/admin/*` app-admin-key
+authentication keeps working.
+
 ## Deployment contract
 
-Run `npm ci`, then `npm run migrate`, then `npm start`. Tests use `npm test`, core tests use `npm run test:core`, syntax/lint uses `npm run lint`. Required environment: `MODERATION_APPS_JSON`; optional `HOST` (default `127.0.0.1`), `PORT` (default `4310`), `MODERATION_DB_PATH` (default `./var/moderation.sqlite`). Migrations run on startup too.
+Run `npm ci`, then `npm run migrate`, then `npm start`. Tests use `npm test`, core tests use `npm run test:core`, syntax/lint uses `npm run lint`. No environment variable is required. Optional: `HOST` (default `127.0.0.1`), `PORT` (default `4310`), `MODERATION_DB_PATH` (default `./var/moderation.sqlite`), `MODERATION_KEY_GRACE_MS`, `MODERATION_SESSION_TTL_MS`, `MODERATION_SESSION_IDLE_MS`, `MODERATION_PUBLIC_ORIGIN`, and `MODERATION_ADMIN_INSECURE_COOKIE` (local http only). `MODERATION_APPS_JSON` is accepted only as a one-time import for upgrades. Migrations run on startup too.
 
-Production uses `docker-compose.yml` plus a `.env` beside it (template: `.env.example`), never a source build. `MODERATION_IMAGE` defaults to the CNB `latest` image. It binds `127.0.0.1:4310` and persists SQLite plus its WAL in a local named volume. Watchtower is pinned to `nickfedor/watchtower:1.23.2` and selects only the moderation container through its explicit name, enable label, and project scope. Watchtower excludes itself. Use a moving image tag for automatic updates, or pin a digest and stop the watcher for manual upgrades.
+Production uses `docker-compose.yml` alone; `docker compose up -d` needs no `.env` and no credentials. `.env.example` lists only optional overrides, never builds source, `MODERATION_IMAGE` defaults to the CNB `latest` image. It binds `127.0.0.1:4310` and persists SQLite plus its WAL in a local named volume. Watchtower is pinned to `nickfedor/watchtower:1.23.2` and selects only the moderation container through its explicit name, enable label, and project scope. Watchtower excludes itself. Use a moving image tag for automatic updates, or pin a digest and stop the watcher for manual upgrades.
 
-Local builds use **only** `docker-compose.build.yml`, a standalone configuration with its own default project/volume and no watcher. Run `docker compose -f docker-compose.build.yml --env-file <protected-env-file> up --build -d`. MySQL and Redis are not implemented or required. One service process owns each SQLite database; do not share it over NFS or SMB. Existing installations must preserve their current volume through `MODERATION_DATA_VOLUME`.
+Local builds use **only** `docker-compose.build.yml`, a standalone configuration with its own default project/volume and no watcher. Run `docker compose -f docker-compose.build.yml up --build -d`. MySQL and Redis are not implemented or required. One service process owns each SQLite database; do not share it over NFS or SMB. Existing installations must preserve their current volume through `MODERATION_DATA_VOLUME`.
 
 | Pipeline | Checks | Image publication |
 | --- | --- | --- |
@@ -160,7 +188,7 @@ Local builds use **only** `docker-compose.build.yml`, a standalone configuration
 
 Both pipelines reuse `node scripts/publish-ci.mjs verify` for validation. GitHub publishes `sha-<full-commit>` and semantic-version tags such as `v1.0.0`. CNB publishes `sha-<short-commit>` and version tags. Main and stable releases advance `latest`; prereleases do not. PRs never log in or publish images. Override `MODERATION_IMAGE` to switch registry or pin a tag or digest. No workflow connects to production or needs deployment credentials.
 
-Keep data and backups on domestic infrastructure. Terminate public TLS at the trusted host Nginx. Never publish admin/API secrets or disable certificate verification. See [deployment and operations](deploy/README.md) for configuration, private-registry access, backup, and update procedures.
+Keep data and backups on domestic infrastructure. Terminate public TLS at the trusted host Nginx, which proxies both `/v1/` and `/admin` to `127.0.0.1:4310`. Never publish admin/API secrets or disable certificate verification. See [deployment and operations](deploy/README.md) for initialization, password reset, private-registry access, backup, and update procedures.
 
 ## Internal extension contract (W1-core / W1-ext)
 

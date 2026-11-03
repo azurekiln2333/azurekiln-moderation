@@ -21,7 +21,9 @@ This contract applies to the independent moderation service, its database, and t
 - The core migration owns applications, keywords, ip_rules, and audit_events. Extensions own namespaced migrations under their module paths. Canonicalize SQL line endings before hashing to keep Windows and Linux checksums compatible.
 - Wrap each mutation and its audit event in one transaction. Text queue insertion and its decision audit are atomic. Do not return a successful check before its audit write completes.
 - Keep audits for 365 days. Delete only `created_at < cutoff`; equality survives. Ext retention uses the latest action anchor. Credentials and scene policies are not cleanup targets.
-- Required configuration: `MODERATION_APPS_JSON`. Optional: `HOST`, `PORT`, `MODERATION_DB_PATH`. Do not add a shorter retention override.
+- Required configuration: none. Optional: `HOST`, `PORT`, `MODERATION_DB_PATH`, and the database-backed admin settings.
+  `MODERATION_APPS_JSON` is a one-time upgrade import only; never require it at startup and never fail boot on it.
+  Do not add a shorter retention override.
 - Region rules use an injected local resolver. Unknown resolution returns 503 when an enabled region rule needs evaluation. Never add an undisclosed external service or disable TLS verification.
 
 ## 4. Validation & error matrix

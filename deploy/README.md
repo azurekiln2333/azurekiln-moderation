@@ -30,31 +30,37 @@ independently, so record the digest of the selected registry's actual image.
 
 ## Production container
 
-Install Docker Engine and Compose v2 on the deployment host. Put `docker-compose.yml`
-and `.env.example` in one directory (or use this repository), then create `.env`
-from the template. Compose reads `.env` from that directory automatically:
+Install Docker Engine and Compose v2 on the deployment host. Copy `docker-compose.yml`
+to one directory (or use this repository) and start it. **No `.env` file and no
+credentials are required**: apps, API/admin keys, and administrator accounts live
+in the SQLite database and are managed in the `/admin` console.
 
 ```sh
-cp .env.example .env && chmod 600 .env   # fill in MODERATION_APPS_JSON
 docker compose config --quiet
 docker compose pull
-docker compose run --rm --no-deps moderation node scripts/migrate.mjs
 docker compose up -d --wait --wait-timeout 90 --no-build moderation
 docker compose ps
+docker compose logs moderation | grep moderation.setup_code
 ```
 
-`.env` must be readable only by the deployment account and must supply
-`MODERATION_APPS_JSON`.
-Its value is a JSON array of `{appId,apiKey,adminKey}`. Generate distinct random
-keys with at least 32 characters. Provision QFLI and gateway as separate apps
-unless the consuming team explicitly intends them to share policies and data.
-Do not print resolved Compose configuration or environment values into logs.
+On the first start, with an empty database, the service prints a one-time setup
+code to the container log:
 
-`MODERATION_IMAGE` defaults to the CNB image
-`docker.cnb.cool/azurekiln/azurekiln-moderation/moderation:latest`. Set it in `.env`
-to use `ghcr.io/azurekiln2333/azurekiln-moderation:latest` or to pin a digest.
-To keep secrets outside the deployment directory, pass `--env-file <path>` to
-every command instead. Production Compose has no build directive. It never builds source.
+```json
+{"event":"moderation.setup_code","code":"<one-time code>","expiresAt":"2026-11-04T00:00:00.000Z","hint":"POST /admin/api/setup with this code"}
+```
+
+Open `http://127.0.0.1:4310/admin/setup` through an SSH tunnel (or the HTTPS
+proxy described below), paste the code, and create the super administrator. The
+code hashes to the database, is valid for 24 hours, and is destroyed as soon as
+it is used. After the first administrator exists the setup page is closed and no
+new code is generated on restart. The code is never written to the log again;
+if it is also lost, use the reset procedure below.
+
+`MODERATION_IMAGE` defaults to `docker.cnb.cool/azurekiln/azurekiln-moderation/moderation:latest`.
+Set it in an optional `.env` or with `--env-file <path>` to use
+`ghcr.io/azurekiln2333/azurekiln-moderation:latest` or to pin a digest.
+Production Compose has no build directive. It never builds source.
 
 | Variable | Default / purpose |
 | --- | --- |
@@ -64,12 +70,88 @@ every command instead. Production Compose has no build directive. It never build
 | `MODERATION_DATA_VOLUME` | `<project>-data`; preserve an existing volume when upgrading |
 | `WATCHTOWER_POLL_INTERVAL` | `600` seconds |
 
+The image copies `public/` as well as `src/`, so the `/admin` console ships with
+the service and needs no separate web server or CDN.
+
+`.env.example` lists only these optional overrides. Every setting ships
+commented out, so `docker compose up -d` works on a bare host. Do not print
+resolved Compose configuration or environment values into logs.
+
 The image uses Node 24.15.0, an unprivileged user, and a database health probe.
 The container listens on port 4310. Compose binds it to host loopback and stores
 the database and WAL files at `/app/var` in `moderation-data`. The default
 production volume name is `azurekiln-moderation-data`. Root filesystem writes are
 disabled. Startup applies all module migrations and runs retention cleanup.
 Never run `docker compose down -v` against a production volume.
+
+`HOST`, `PORT`, and `MODERATION_DB_PATH` are fixed by Compose. Optional
+database-settings environment variables, when a deployment needs to override a
+default, come from the operator environment:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `MODERATION_KEY_GRACE_MS` | `3600000` | Key-rotation grace window (1 minute .. 7 days) |
+| `MODERATION_SESSION_TTL_MS` | `43200000` | Absolute admin session lifetime |
+| `MODERATION_SESSION_IDLE_MS` | `1800000` | Admin session idle timeout |
+| `MODERATION_ADMIN_INSECURE_COOKIE` | `0` | Only `1` omits the `Secure` cookie flag; local http debugging only |
+| `MODERATION_PUBLIC_ORIGIN` | unset | Optional public origin used for OIDC callback and Origin checks, e.g. `https://mod.example.cn` |
+
+## Administration console
+
+Every tenant setting moved from environment variables into the database and is
+managed at `/admin`. The console covers:
+
+- applications and their API/admin keys (issue, rotate, revoke, disable);
+- keyword dictionaries per app, including batch import and export;
+- IP/CIDR/region rules;
+- pre-review (先审后发) switches per scene;
+- the manual review queue;
+- submitted reports and their handling;
+- audit log queries;
+- administrator accounts.
+
+Key plaintext is shown **once**, at issue or rotation time. The database stores
+only hashes. A rotated key keeps working for the grace window so consumers can be
+redeployed without downtime; revoked keys and disabled apps are rejected
+immediately by `/v1/*`.
+
+The console is bound to `127.0.0.1` like the API. Reach it through an SSH tunnel:
+
+```sh
+ssh -L 4310:127.0.0.1:4310 <operator>@<deployment-host>
+```
+
+To serve it publicly, terminate TLS at the host Nginx with
+`deploy/nginx.conf.example`, which proxies both `/v1/` and `/admin` to
+`127.0.0.1:4310` and adds no-store and framing headers. Session cookies are
+`HttpOnly; Secure; SameSite=Lax`, so the console must be reached over HTTPS at a
+single hostname. Do not disable certificate verification or expose the container
+port directly. Keep admin and API keys server-side; they must never ship in an
+app or website bundle.
+
+### Reset a forgotten administrator password
+
+```sh
+docker compose exec moderation node scripts/reset-admin.mjs
+```
+
+Without arguments the script resets the `super` account, prints a new random
+password once, forces a password change on next login, and revokes that account's
+sessions. Add `--username <name>` to reset a specific account. The script is
+idempotent and exits non-zero when the database does not exist. Use
+`--bootstrap` if every super administrator was deleted and a new setup code is
+needed.
+
+### Upgrading from environment-configured apps
+
+Earlier releases required `MODERATION_APPS_JSON`. If that variable is still set,
+startup imports its apps once (existing `appId` values are skipped), logs
+`{"event":"moderation.apps_imported",...}`, and adds
+`{"event":"moderation.config_env_deprecated"}`. Inspect the imported apps in
+`/admin`, rotate their keys, and then delete the variable. An empty or missing
+variable is silent; an invalid one never blocks startup because the database
+already holds the configuration. The `/v1/*` paths, headers, and response shapes
+are unchanged, so QFLI server and the gateway need no code changes.
 
 SQLite is the only supported database. MySQL and Redis are neither supported
 nor required, so there are no host-network or bundled-database variants.
@@ -135,11 +217,11 @@ automatic updates only after the relevant backup and acceptance checks pass.
 
 ## Local source builds
 
-Use the standalone file **alone**, with synthetic/local app credentials:
+Use the standalone file **alone**; it also needs no credentials:
 
 ```sh
-docker compose -f docker-compose.build.yml --env-file /path/to/local-moderation.env config --quiet
-docker compose -f docker-compose.build.yml --env-file /path/to/local-moderation.env up --build -d
+docker compose -f docker-compose.build.yml config --quiet
+docker compose -f docker-compose.build.yml up --build -d
 ```
 
 No `MODERATION_IMAGE` is required. This builds `azurekiln-moderation:local`, sets
@@ -147,17 +229,21 @@ the Watchtower enable label to false, and has no updater service. Do not merge
 the production file into this command. Defaults are project
 `azurekiln-moderation-local` and volume `azurekiln-moderation-local-data`.
 Use a different `MODERATION_PORT` if production already uses host port 4310.
+Local authentication uses the same database-backed accounts, so the local build
+prints the same one-time setup code on first start.
 
 Configuration regression tests run through `npm test`. Set
 `MODERATION_COMPOSE_BIN` to an official standalone Compose binary when the
-`docker compose` plugin is unavailable. These tests use dummy credentials and
-an empty temporary env file, never operator environment files. Without a CLI
-they explicitly skip; GitHub requires the CLI before running them.
+`docker compose` plugin is unavailable. These tests use an empty temporary env
+file and never read operator environment files. They also assert statically,
+without any CLI, that neither file requires a secret or an `env_file`. Without a
+CLI the runtime resolution cases explicitly skip; GitHub requires the CLI before
+running them.
 
 ## Direct process
 
-Install Node 24.15+ and supply `MODERATION_APPS_JSON` through the service manager.
-Set `MODERATION_DB_PATH` to a persistent local path owned by the service account.
+Install Node 24.15+ and set `MODERATION_DB_PATH` to a persistent local path owned
+by the service account. No credentials are needed in the environment.
 
 ```sh
 npm ci
@@ -165,19 +251,23 @@ npm run migrate
 npm start
 ```
 
-The default listener is `127.0.0.1:4310`. Run one managed process. Use the same
-environment for migration and service startup. Allow the process to stop
-gracefully before replacing it.
+The default listener is `127.0.0.1:4310`. First start prints the one-time setup
+code; use it at `/admin/setup`. Run one managed process. Use the same database
+path for migration and service startup. Allow the process to stop gracefully
+before replacing it.
 
 ## TLS and smoke test
 
 Adapt `deploy/nginx.conf.example` to the assigned hostname and valid certificate.
-Validate the proxy configuration before reloading it. Keep the service port
-private. API consumers must verify TLS certificates. Admin and API keys are
-server-side credentials and must never ship in an app or website bundle.
+It proxies both `/v1/` and `/admin` to `127.0.0.1:4310`, so the console and the
+API live on one HTTPS origin. Validate the proxy configuration before reloading
+it. Keep the service port private. API consumers must verify TLS certificates.
+Admin and API keys are server-side credentials and must never ship in an app or
+website bundle.
 
-Set `MODERATION_BASE_URL`, `MODERATION_APP_ID`, and `MODERATION_API_KEY` in the
-operator environment, then run:
+Create the consuming app in `/admin` first, copy its API key once, then set
+`MODERATION_BASE_URL`, `MODERATION_APP_ID`, and `MODERATION_API_KEY` in the
+operator environment and run:
 
 ```sh
 node deploy/smoke.mjs
@@ -210,8 +300,15 @@ No provider endpoints, secrets, or third-party services are enabled by default.
 
 ## Administration and retention
 
-Use the app's admin key for scene policies, pending reviews, report handling,
-and audit queries documented in the root README. Admin keys manage one app.
+Manage applications, keys, dictionaries, rules, pre-review scenes, the review
+queue, reports, audits, and administrators in `/admin`. The console stores
+sessions in the database and enforces CSRF and login rate limits. OIDC login is
+optional and only appears when an issuer, client ID, client secret, and allowed
+accounts are configured in the console; without that configuration no OIDC entry
+is exposed.
+
+The legacy `/v1/admin/*` endpoints keep working with an app's admin key, and
+`/v1/reports` keeps working with an API key. App admin keys manage one app only;
 API keys can submit reports and query sanitized review results. Review delivery
 uses polling; no outbound callback is configured.
 
@@ -222,7 +319,9 @@ SQLite stores decisions, pending payloads, reports, handling events, and audit
 records. Cleanup runs at startup and hourly. It deletes rows strictly older
 than 365 days. Review resolution and report handling reset the record's
 retention anchor. Report history remains with the report until that anchor
-expires. App credentials and scene policies are not retention targets.
+expires. Applications, keys, administrator accounts, setup codes, and scene
+policies are not retention targets; expired admin sessions and login attempts are
+cleaned on the same 365-day cutoff.
 
 Restrict database and backup access to the service operator. Use SQLite's online
 backup API or `.backup` command; do not copy the main file without its live WAL.
@@ -247,6 +346,6 @@ schema change; do not assume older images understand newer schema versions.
 ## Deployment handoff
 
 The repository supplies deployment artifacts. A production hostname, host
-access, TLS certificate, app credentials, and consumer configuration must be
-provided by the operator. No production credentials or deployment destination
+access, TLS certificate, administrator password, and consumer configuration must
+be provided by the operator. No production credentials or deployment destination
 are embedded in the repository.

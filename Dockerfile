@@ -13,6 +13,7 @@ COPY src ./src
 COPY migrations ./migrations
 COPY data ./data
 COPY scripts ./scripts
+COPY public ./public
 COPY packages/client/package.json packages/client/index.js packages/client/index.cjs ./packages/client/
 RUN mkdir -p /app/var && chown node:node /app/var
 USER node
