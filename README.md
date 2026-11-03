@@ -147,7 +147,20 @@ Distribution: run `npm pack --workspace packages/client --pack-destination <temp
 
 ## Deployment contract
 
-Run `npm ci`, then `npm run migrate`, then `npm start`. Tests use `npm test`, core tests use `npm run test:core`, syntax/lint uses `npm run lint`. Required environment: `MODERATION_APPS_JSON`; optional `HOST` (default `127.0.0.1`), `PORT` (default `4310`), `MODERATION_DB_PATH` (default `./var/moderation.sqlite`). Migrations run on startup too. One service process is sufficient; do not share SQLite over network filesystems. Bind the database volume on domestic infrastructure. Terminate public TLS at the trusted reverse proxy. Never publish admin/API secrets or disable certificate verification. Docker and operating instructions belong to W1-ext's `deploy/README.md`.
+Run `npm ci`, then `npm run migrate`, then `npm start`. Tests use `npm test`, core tests use `npm run test:core`, syntax/lint uses `npm run lint`. Required environment: `MODERATION_APPS_JSON`; optional `HOST` (default `127.0.0.1`), `PORT` (default `4310`), `MODERATION_DB_PATH` (default `./var/moderation.sqlite`). Migrations run on startup too.
+
+Production uses `compose.yaml` with a published `MODERATION_IMAGE`, never a source build. It binds `127.0.0.1:4310` and persists SQLite plus its WAL in a local named volume. Watchtower is pinned to `nickfedor/watchtower:1.23.2` and selects only the moderation container through its explicit name, enable label, and project scope. Watchtower excludes itself. Use a moving image tag for automatic updates, or pin a digest and stop the watcher for manual upgrades.
+
+Local builds use **only** `compose.build.yaml`, a standalone configuration with its own default project/volume and no watcher. Run `docker compose -f compose.build.yaml --env-file <protected-env-file> up --build -d`. MySQL and Redis are not implemented or required. One service process owns each SQLite database; do not share it over NFS or SMB. Existing installations must preserve their current volume through `MODERATION_DATA_VOLUME`.
+
+| Pipeline | Checks | Image publication |
+| --- | --- | --- |
+| `.github/workflows/build-and-push.yml` | Every push and PR; shared tests/lint plus Compose checks | Main and `v*` tags publish `ghcr.io/<owner>/<repository>` after checks |
+| `.cnb.yml` (preserved) | Existing main/tag and PR validation | `docker.cnb.cool/<CNB-repository>/moderation` |
+
+Both pipelines reuse `node scripts/publish-ci.mjs verify` for validation. GitHub publishes `sha-<full-commit>` and semantic-version tags such as `v1.0.0`. CNB publishes `sha-<short-commit>` and version tags. Main and stable releases advance `latest`; prereleases do not. PRs never log in or publish images. Set `MODERATION_IMAGE` to the selected registry/tag or digest. No workflow connects to production or needs deployment credentials.
+
+Keep data and backups on domestic infrastructure. Terminate public TLS at the trusted host Nginx. Never publish admin/API secrets or disable certificate verification. See [deployment and operations](deploy/README.md) for configuration, private-registry access, backup, and update procedures.
 
 ## Internal extension contract (W1-core / W1-ext)
 

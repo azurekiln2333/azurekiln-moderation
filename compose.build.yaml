@@ -1,0 +1,45 @@
+# Standalone local configuration. Use this file alone, not as an override.
+name: ${COMPOSE_PROJECT_NAME:-azurekiln-moderation-local}
+
+services:
+  moderation:
+    image: azurekiln-moderation:local
+    pull_policy: build
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ${COMPOSE_PROJECT_NAME:-azurekiln-moderation-local}-moderation
+    restart: unless-stopped
+    init: true
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      HOST: 0.0.0.0
+      PORT: "4310"
+      MODERATION_DB_PATH: /app/var/moderation.sqlite
+      MODERATION_APPS_JSON: ${MODERATION_APPS_JSON:?Set app credentials in a protected environment file}
+    ports:
+      - "127.0.0.1:${MODERATION_PORT:-4310}:4310"
+    volumes:
+      - moderation-data:/app/var
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    labels:
+      com.centurylinklabs.watchtower.enable: "false"
+      com.centurylinklabs.watchtower.scope: ${COMPOSE_PROJECT_NAME:-azurekiln-moderation-local}
+    mem_limit: 256m
+    cpus: "0.5"
+    pids_limit: 128
+    stop_grace_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  moderation-data:
+    name: ${MODERATION_DATA_VOLUME:-${COMPOSE_PROJECT_NAME:-azurekiln-moderation-local}-data}

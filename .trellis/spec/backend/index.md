@@ -1,6 +1,8 @@
 # Moderation backend specifications
 
 Read [moderation-contract.md](./moderation-contract.md) and the root README before changing a public API, tenant-scoped query, migration, retention handler, or module boundary.
+Read [deployment.md](./deployment.md) before changing Compose, image publication,
+deployment environment wiring, or update/rollback instructions.
 
 ## Pre-development checklist
 
