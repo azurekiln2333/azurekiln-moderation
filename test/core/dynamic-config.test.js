@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -198,6 +198,36 @@ test('an existing super administrator suppresses new setup codes', async t => {
   assert.equal(issued.at(-1).required, false);
   assert.equal(issued.at(-1).code, null);
   dispose(t, restarted);
+  t.after(() => temporary.remove());
+});
+
+test('an upgraded application without stored keys adopts the legacy ones', async t => {
+  // A deployment that only ever ran migration 001: the application row exists, but its
+  // API/admin keys lived solely in MODERATION_APPS_JSON until this release.
+  const temporary = temporaryDatabase();
+  const raw = new DatabaseSync(temporary.path);
+  raw.exec('PRAGMA foreign_keys = ON');
+  raw.exec('CREATE TABLE schema_migrations (namespace TEXT, version INTEGER, checksum TEXT, applied_at TEXT)');
+  const core = readFileSync(new URL('../../migrations/001-core.sql', import.meta.url), 'utf8').replace(/\r\n?/g, '\n');
+  raw.exec(core);
+  raw.prepare('INSERT INTO schema_migrations VALUES(?,?,?,?)').run('core', 1,
+    createHash('sha256').update(core).digest('hex'), '2026-01-01T00:00:00.000Z');
+  raw.prepare('INSERT INTO applications VALUES(?,?)').run('legacyapp', '2026-01-01T00:00:00.000Z');
+  raw.prepare('INSERT INTO keywords VALUES(?,?,?,?,?,?,?,?)').run('k1', 'legacyapp', '旧词', '旧词', 'custom', 1,
+    '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+  raw.close();
+
+  const legacy = JSON.stringify([{ appId: 'legacyapp', apiKey: 'k'.repeat(40), adminKey: 'K'.repeat(40) }]);
+  const app = await createApp({ dbPath: temporary.path, apps: legacy, seedKeywords: false, ...quiet });
+  dispose(t, app);
+  const ctx = app.locals.context;
+  assert.equal(ctx.appStore.getApp('legacyapp').status, 'active', 'the pre-existing row was upgraded');
+  assert.equal(ctx.db.prepare("SELECT word FROM keywords WHERE app_id='legacyapp'").get().word, '旧词',
+    'data from the old schema survives');
+  assert.equal(ctx.appStore.resolveToken('legacyapp', 'k'.repeat(40)), 'api',
+    'the legacy API key keeps working after the upgrade');
+  assert.equal(ctx.appStore.resolveToken('legacyapp', 'K'.repeat(40)), 'admin');
+  assert.ok(ctx.db.prepare('PRAGMA table_info(applications)').all().some(row => row.name === 'status'));
   t.after(() => temporary.remove());
 });
 

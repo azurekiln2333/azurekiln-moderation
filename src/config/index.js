@@ -6,9 +6,16 @@ import { createAppStore, SYSTEM_APP_ID } from './store.js';
 const digest = value => createHash('sha256').update(value).digest('hex');
 
 /**
- * Imports MODERATION_APPS_JSON once. Existing applications are skipped, never overwritten:
- * the operator may already have rotated keys through the admin UI.
- * The legacy plaintext keys are stored as hashes so existing consumers keep working.
+ * Imports MODERATION_APPS_JSON once.
+ *
+ * Applications that already exist are never overwritten, because the operator may have
+ * rotated keys through the console. Two cases still need the legacy secrets:
+ *   - a brand new application           -> created with the imported keys;
+ *   - an upgraded application with no keys yet (its keys lived only in the environment
+ *     variable until this release)      -> the legacy keys are attached, so consumers keep
+ *     working without an outage.
+ * An application that already owns keys is left untouched and reported as skipped.
+ * Only hashes are stored; the plaintext never reaches the database.
  */
 export function importLegacyApps(ctx, value, { log = console } = {}) {
   let apps;
@@ -16,17 +23,21 @@ export function importLegacyApps(ctx, value, { log = console } = {}) {
     apps = parseLegacyApps(value);
   } catch {
     log.error(JSON.stringify({ event: 'moderation.apps_import_failed' }));
-    return { created: [], skipped: [], failed: true };
+    return { created: [], adopted: [], skipped: [], failed: true };
   }
-  if (apps.length === 0) return { created: [], skipped: [], failed: false };
-  const created = [];
+  if (apps.length === 0) return { created: [], adopted: [], skipped: [], failed: false };
+  const inserted = [];
+  const adopted = [];
   const skipped = [];
   for (const app of apps) {
-    if (ctx.appStore.getApp(app.appId)) {
+    const existing = ctx.appStore.getApp(app.appId);
+    const live = existing ? ctx.db.prepare(`SELECT COUNT(*) AS n FROM app_keys
+      WHERE app_id=? AND status IN ('active','grace')`).get(app.appId).n : 0;
+    if (existing && live > 0) {
       skipped.push(app.appId);
       continue;
     }
-    ctx.appStore.createApp({ appId: app.appId, name: app.appId });
+    if (!existing) ctx.appStore.createApp({ appId: app.appId, name: app.appId });
     const now = ctx.now();
     ctx.transaction(() => {
       ctx.db.prepare(`INSERT INTO app_keys (key_id, app_id, kind, token_hash, status, created_at)
@@ -35,13 +46,21 @@ export function importLegacyApps(ctx, value, { log = console } = {}) {
         VALUES (?,?,'admin',?,'active',?)`).run(randomUUID(), app.appId, digest(app.adminKey), now);
     });
     ctx.appStore.invalidateAudienceCache(app.appId);
-    created.push(app.appId);
+    if (existing) adopted.push(app.appId);
+    else inserted.push(app.appId);
   }
-  if (created.length) log.info(JSON.stringify({ event: 'moderation.apps_imported', created, skipped }));
-  else if (skipped.length) log.info(JSON.stringify({ event: 'moderation.apps_import_skipped', skipped }));
+  if (inserted.length) {
+    log.info(JSON.stringify({ event: 'moderation.apps_imported', created: inserted, skipped }));
+  }
+  if (adopted.length) {
+    log.info(JSON.stringify({ event: 'moderation.apps_import_keys', adopted }));
+  }
+  if (skipped.length) {
+    log.info(JSON.stringify({ event: 'moderation.apps_import_skipped', skipped }));
+  }
   log.warn(JSON.stringify({ event: 'moderation.config_env_deprecated',
     hint: 'MODERATION_APPS_JSON has been imported into the database and can be removed' }));
-  return { created, skipped, failed: false };
+  return { created: inserted, adopted, skipped, failed: false };
 }
 
 /** Ensures the internal audit tenant exists, builds the app store, and wires configuration hooks. */
