@@ -1,0 +1,4 @@
+# The admin console assets live in this directory (built and owned by the
+# admin-console task). This placeholder keeps the directory present so the
+# Dockerfile's `COPY public ./public` works for image builds that do not yet
+# include console assets.
