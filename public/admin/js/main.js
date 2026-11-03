@@ -22,6 +22,10 @@ const shell = {
 };
 
 const PUBLIC_ONLY = new Set(['/login', '/init']);
+// Pages that operate on one selected application; entering one with no selection
+// picks the first available application so the console is usable right after the
+// first application is created.
+const TENANT_PAGES = new Set(['/keywords', '/ip-rules', '/scenes', '/reviews', '/reports', '/audit']);
 const pages = [
   ['/apps', appsView, '应用与密钥'],
   ['/keywords', keywordsView, '词库'],
@@ -97,14 +101,26 @@ setNavigateHook(async ({ handler, params, query, path, title }) => {
   chrome(true);
   highlightNav(path);
   document.title = title ? `${title} · 审核服务管理后台` : '审核服务管理后台';
+  if (TENANT_PAGES.has(path) && !shell.appId) await selectFirstApp();
   await handler(main, { params, query, ctx: shell.ctx });
 });
+
+/** Refreshes the application list and, if none is selected yet, picks the first one. */
+async function selectFirstApp() {
+  try {
+    const listed = await api.listApps();
+    const apps = Array.isArray(listed?.items) ? listed.items : [];
+    if (!apps.length) return;
+    shell.session = { ...(shell.session ?? {}), apps };
+    shell.appId = shell.appId ?? apps[0].appId;
+    setWhoami(shell.session);
+  } catch { /* the page never fails because the selector could not load */ }
+}
 
 export async function boot() {
   document.getElementById('topbar').hidden = true;
   await loadSession();
   await refreshCsrf();
-
   route('/init', initView, { title: '初始化' });
   route('/login', loginView, { title: '登录' });
   route('/password', passwordView, { title: '修改密码' });
