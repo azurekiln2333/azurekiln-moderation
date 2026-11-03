@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 
 export const adminUiRoot = join(dirname(dirname(dirname(fileURLToPath(import.meta.url)))), 'public', 'admin');
 
-const asset = /^\/(?:admin\.css|favicon\.svg|js\/[A-Za-z0-9_.-]+\.js)$/u;
+const asset = /^\/(?:admin\.css|favicon\.svg|index\.html|js\/[A-Za-z0-9_.-]+\.js)$/u;
 
 // The admin UI is a static, framework-free bundle. It never receives credentials from the
 // server; every privileged call is made by the browser against the admin API with a session
@@ -27,6 +27,10 @@ export function createAdminUiRouter({ root = adminUiRoot } = {}) {
     next();
   });
   router.get('/', (_req, res) => res.sendFile(join(root, 'index.html')));
+  // The shell is a hash router; serve the documented deep links so operators can
+  // bookmark /admin/setup and /admin/login instead of reaching for a hash.
+  router.get('/setup', (_req, res) => res.redirect(302, '/admin/#/init'));
+  router.get('/login', (_req, res) => res.redirect(302, '/admin/#/login'));
   router.use((req, res, next) => (asset.test(req.path) ? next() : next(Object.assign(new Error('Not found'),
     { status: 404, error: 'not_found' }))));
   router.use(express.static(root, { index: false, dotfiles: 'deny', redirect: false, fallthrough: false }));

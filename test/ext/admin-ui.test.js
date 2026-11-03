@@ -75,10 +75,12 @@ test('admin UI assets are served by extension and unknown paths are refused', as
   assert.match(icon.headers.get('content-type'), /svg/u);
 
   for (const path of ['/admin/missing.css', '/admin/js/missing.js', '/admin/secrets.txt',
-    '/admin/js/main.js.map', '/admin/../app.js', '/admin/index.html']) {
+    '/admin/js/main.js.map', '/admin/../app.js']) {
     const response = await request(path);
     assert.equal(response.status, 404, path);
   }
+  // The shell itself is reachable by its file name as well as by directory index.
+  assert.equal((await request('/admin/index.html')).status, 200);
 });
 
 test('admin UI accepts only GET and HEAD', async t => {

@@ -48,6 +48,13 @@ test('the console serves its shell and rejects unknown asset paths', async t => 
   assert.match(await shell.text(), /<html/u);
   assert.match(shell.headers.get('content-security-policy') ?? '', /default-src 'self'/u);
   assert.equal((await fetch(`${c.base}/admin/../src/app.js`)).status, 404);
+  // The deployment docs point operators at these deep links.
+  for (const [path, target] of [['/admin/setup', '/admin/#/init'], ['/admin/login', '/admin/#/login']]) {
+    const redirect = await fetch(`${c.base}${path}`, { redirect: 'manual' });
+    assert.equal(redirect.status, 302, path);
+    assert.equal(redirect.headers.get('location'), target, path);
+  }
+  assert.equal((await fetch(`${c.base}/admin/index.html`)).status, 200);
 });
 
 test('setup is one-time, then the operator can sign in and manage applications', async t => {
