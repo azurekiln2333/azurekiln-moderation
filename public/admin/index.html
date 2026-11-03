@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>审核服务管理后台</title>
+<link rel="icon" href="./favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="./admin.css">
+</head>
+<body>
+<a class="skip-link" href="#main">跳到主要内容</a>
+<div id="app" class="app" data-state="loading">
+  <header class="topbar" id="topbar" hidden>
+    <span class="brand">审核服务管理后台</span>
+    <nav class="topnav" id="topnav" aria-label="主导航">
+      <a href="#/apps">应用与密钥</a>
+      <a href="#/keywords">词库</a>
+      <a href="#/ip-rules">IP 规则</a>
+      <a href="#/scenes">先审后发</a>
+      <a href="#/reviews">审核队列</a>
+      <a href="#/reports">举报</a>
+      <a href="#/audit">审计日志</a>
+      <a href="#/admins">管理员</a>
+    </nav>
+    <div class="account">
+      <label class="app-select" hidden>
+        <span>应用</span>
+        <select id="app-select"></select>
+      </label>
+      <span class="whoami" id="whoami"></span>
+      <button type="button" class="button" id="logout" hidden>退出</button>
+    </div>
+  </header>
+  <main id="main" class="main" tabindex="-1">
+    <p class="muted" id="boot">正在加载…</p>
+  </main>
+  <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+</div>
+<noscript><p class="fallback">管理后台需要启用 JavaScript。</p></noscript>
+<script type="module" src="./js/main.js"></script>
+</body>
+</html>
