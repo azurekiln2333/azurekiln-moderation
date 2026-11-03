@@ -1,15 +1,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { configureApps } from '../../src/auth.js';
+import { parseLegacyApps } from '../../src/auth.js';
+import { assertObject, booleanField, pagination, stringField } from '../../src/validation.js';
 import { APPS, fixture, createKeyword } from './fixture.js';
 
-test('app configuration rejects ambiguous or unsafe credentials', () => {
-  assert.throws(() => configureApps(undefined), /at least one/);
-  assert.throws(() => configureApps('{secret-data'), error => !error.message.includes('secret-data'));
-  assert.throws(() => configureApps([APPS[0], APPS[0]]), /unique/);
-  assert.throws(() => configureApps([{ ...APPS[0], adminKey: APPS[0].apiKey }]), /unique/);
-  assert.throws(() => configureApps([{ ...APPS[0], apiKey: 'short' }]), /32/);
-  assert.throws(() => configureApps([{ ...APPS[0], appId: '../alpha' }]), /identifier/);
+test('legacy app configuration rejects ambiguous or unsafe credentials', () => {
+  assert.deepEqual(parseLegacyApps(undefined), []);
+  assert.deepEqual(parseLegacyApps(''), []);
+  assert.throws(() => parseLegacyApps('{secret-data'), error => !error.message.includes('secret-data'));
+  assert.throws(() => parseLegacyApps([APPS[0], APPS[0]]), /unique/);
+  assert.throws(() => parseLegacyApps([{ ...APPS[0], adminKey: APPS[0].apiKey }]), /unique/);
+  assert.throws(() => parseLegacyApps([{ ...APPS[0], apiKey: 'short' }]), /32/);
+  assert.throws(() => parseLegacyApps([{ ...APPS[0], appId: '../alpha' }]), /identifier/);
+  assert.deepEqual(parseLegacyApps(JSON.stringify([APPS[0]])), [APPS[0]]);
+});
+
+test('validation helpers keep their published contracts', () => {
+  assert.deepEqual(assertObject({ a: 1 }), { a: 1 });
+  assert.throws(() => assertObject([]), /object/);
+  assert.equal(stringField('x', 'word'), 'x');
+  assert.equal(stringField(undefined, 'word', { required: false }), null);
+  assert.throws(() => stringField('x', 'word', { values: ['y'] }), /supported/);
+  assert.equal(booleanField(undefined, 'enabled'), true);
+  assert.deepEqual(pagination({}), { limit: 50, offset: 0 });
 });
 
 test('HTTP authentication, admin privileges, and tenant isolation', async t => {

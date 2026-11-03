@@ -35,8 +35,11 @@ test('deployment migration command creates every extension schema and can run tw
   }
   const db = new DatabaseSync(dbPath, { readOnly: true });
   try {
-    assert.deepEqual(db.prepare('SELECT namespace FROM schema_migrations ORDER BY namespace').all().map(row => row.namespace),
-      ['core', 'image', 'reports', 'review']);
+    assert.deepEqual(db.prepare('SELECT DISTINCT namespace FROM schema_migrations ORDER BY namespace').all()
+      .map(row => row.namespace), ['core', 'image', 'reports', 'review']);
+    const versions = db.prepare("SELECT version FROM schema_migrations WHERE namespace='core' ORDER BY version").all()
+      .map(row => row.version);
+    assert.ok(versions.length >= 3);
   } finally { db.close(); }
 });
 

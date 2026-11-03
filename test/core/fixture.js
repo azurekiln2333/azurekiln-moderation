@@ -1,4 +1,5 @@
 import { once } from 'node:events';
+import { createHash, randomUUID } from 'node:crypto';
 import { createApp } from '../../src/app.js';
 
 export const APPS = [
@@ -16,9 +17,32 @@ const noPreReview = {
   registerRoutes() {}
 };
 
+export const digest = value => createHash('sha256').update(value).digest('hex');
+
+/** Inserts an application and its already-known plaintext keys directly, bypassing key minting. */
+export function seedApps(ctx, apps = APPS, { seedKeywords = false } = {}) {
+  ctx.transaction(() => {
+    const now = ctx.now();
+    const insertApp = ctx.db.prepare(`INSERT OR IGNORE INTO applications (app_id, created_at, name, status, updated_at)
+      VALUES (?,?,?,'active',?)`);
+    const insertKey = ctx.db.prepare(`INSERT OR IGNORE INTO app_keys (key_id, app_id, kind, token_hash, status, created_at)
+      VALUES (?,?,?,?,'active',?)`);
+    for (const app of apps) {
+      insertApp.run(app.appId, now, app.appId, now);
+      insertKey.run(randomUUID(), app.appId, 'api', digest(app.apiKey), now);
+      insertKey.run(randomUUID(), app.appId, 'admin', digest(app.adminKey), now);
+      if (seedKeywords) ctx.provisionKeywords(app.appId);
+    }
+  });
+  ctx.appStore.invalidateAudienceCache();
+  ctx.keywordMatcher?.invalidate();
+}
+
 export async function fixture(t, options = {}) {
-  const app = await createApp({ apps: APPS, dbPath: ':memory:', seedKeywords: false,
-    extensionModules: [noPreReview], ...options });
+  const quiet = { log: { info() {}, warn() {}, error() {} }, onSetupCode: setup => setup };
+  const app = await createApp({ dbPath: ':memory:', seedKeywords: false,
+    extensionModules: [noPreReview], ...quiet, ...options, apps: undefined });
+  seedApps(app.locals.context, options.apps ?? APPS, { seedKeywords: options.seedKeywords === true });
   const server = app.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -34,7 +58,7 @@ export async function fixture(t, options = {}) {
   }
   t.after(close);
   async function request(path, { method = 'GET', body, role = 'api', appId = 'alpha', headers = {}, raw } = {}) {
-    const config = APPS.find(item => item.appId === appId);
+    const config = (options.apps ?? APPS).find(item => item.appId === appId);
     const auth = role === null ? {} : { 'X-App-Id': appId, Authorization: `Bearer ${role === 'admin' ? config?.adminKey : config?.apiKey}` };
     const response = await fetch(baseUrl + path, {
       method, headers: { ...auth, ...(body !== undefined || raw !== undefined ? { 'Content-Type': 'application/json' } : {}), ...headers },

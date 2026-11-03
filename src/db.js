@@ -3,6 +3,12 @@ import { mkdirSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 
+export const CORE_MIGRATIONS = Object.freeze([
+  { version: 1, sql: readFileSync(new URL('../migrations/001-core.sql', import.meta.url), 'utf8') },
+  { version: 2, sql: readFileSync(new URL('../migrations/002-dynamic-config.sql', import.meta.url), 'utf8') },
+  { version: 3, sql: readFileSync(new URL('../migrations/003-admin.sql', import.meta.url), 'utf8') }
+]);
+
 export function openDatabase(path) {
   if (path !== ':memory:') mkdirSync(dirname(resolve(path)), { recursive: true });
   const db = new DatabaseSync(path);
@@ -54,6 +60,15 @@ export function migrate(db, namespace, migrations, now) {
   }
 }
 
+// Version 2 adds columns to the pre-existing table, so rows created by version 1 need defaults.
+function backfillApplications(ctx) {
+  ctx.transaction(() => {
+    ctx.db.prepare("UPDATE applications SET status='active' WHERE status IS NULL").run();
+    ctx.db.prepare('UPDATE applications SET updated_at=created_at WHERE updated_at IS NULL').run();
+  });
+}
+
 export function migrateCore(ctx) {
-  ctx.migrate('core', [{ version: 1, sql: readFileSync(new URL('../migrations/001-core.sql', import.meta.url), 'utf8') }]);
+  ctx.migrate('core', CORE_MIGRATIONS);
+  backfillApplications(ctx);
 }

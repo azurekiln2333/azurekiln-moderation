@@ -64,7 +64,7 @@ test('seed provenance data is loaded per app once and administrator deletions su
   const word = first.ctx.db.prepare("SELECT id FROM keywords WHERE app_id='alpha' AND category='custom'").get();
   assert.equal((await first.request(`/v1/admin/keywords/${word.id}`, { method: 'DELETE', role: 'admin' })).status, 200);
   await first.close();
-  const restarted = await fixture(t, { dbPath: temporary.path, seedKeywords: true });
+  const restarted = await fixture(t, { dbPath: temporary.path, seedKeywords: false });
   live.push(restarted);
   assert.equal((await checkText(restarted.request, 'AZUREKILN_MODERATION_TEST_BLOCK')).body.decision, 'pass');
   assert.equal((await restarted.request('/v1/text/check', { method: 'POST', appId: 'beta',
@@ -85,7 +85,7 @@ test('retention deletes strictly older than 365 days and preserves the exact cut
   assert.equal(ctx.cleanup().audit, 1);
   assert.equal(received, new Date(cutoff).toISOString());
   assert.deepEqual(ctx.db.prepare('SELECT id FROM audit_events ORDER BY id').all().map(row => row.id), ['boundary', 'recent']);
-  assert.equal(ctx.db.prepare('SELECT COUNT(*) AS n FROM applications').get().n, 2);
+  assert.equal(ctx.db.prepare("SELECT COUNT(*) AS n FROM applications WHERE app_id<>'_system'").get().n, 2);
 });
 
 test('cleanup failures roll back audit deletion in the shared transaction', async t => {

@@ -4,6 +4,7 @@ import { createKeywordMatcher, registerKeywordRoutes } from './keywords.js';
 
 export function registerTextRoutes(router, ctx) {
   const matcher = createKeywordMatcher(ctx);
+  ctx.keywordMatcher = matcher;
   registerKeywordRoutes(router, ctx, matcher);
   router.post('/text/check', (req, res) => {
     const body = ctx.assertObject(req.body);

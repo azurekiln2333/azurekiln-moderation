@@ -9,33 +9,46 @@ export const CATEGORIES = Object.freeze([
 ]);
 export const KEYWORD_CACHE_MS = 60_000;
 
+const seedCache = { entries: null };
+
+function seedEntries() {
+  if (!seedCache.entries) {
+    seedCache.entries = JSON.parse(readFileSync(new URL('../../data/seed-keywords.json', import.meta.url), 'utf8'));
+  }
+  return seedCache.entries;
+}
+
 function view(row) {
   return { id: row.id, word: row.word, category: row.category, enabled: Boolean(row.enabled),
     createdAt: row.created_at, updatedAt: row.updated_at };
 }
 
-export function provisionApps(ctx, appIds, { seed = true } = {}) {
-  const entries = seed ? JSON.parse(readFileSync(new URL('../../data/seed-keywords.json', import.meta.url), 'utf8')) : [];
+/** Seeds the local dictionary for one application. Idempotent per word. */
+export function provisionApp(ctx, appId, { seed = true } = {}) {
+  if (!ctx.db.prepare('SELECT 1 AS n FROM applications WHERE app_id=?').get(appId)) return false;
+  if (!seed) return true;
+  const entries = seedEntries();
+  const addWord = ctx.db.prepare('INSERT OR IGNORE INTO keywords VALUES(?,?,?,?,?,?,?,?)');
   ctx.transaction(() => {
-    const addApp = ctx.db.prepare('INSERT OR IGNORE INTO applications VALUES(?,?)');
-    const addWord = ctx.db.prepare('INSERT OR IGNORE INTO keywords VALUES(?,?,?,?,?,?,?,?)');
-    for (const appId of appIds) {
-      if (!addApp.run(appId, ctx.now()).changes) continue;
-      for (const { word, category } of entries) {
-        const normalized = normalizeText(word);
-        if (normalized && CATEGORIES.includes(category)) {
-          const now = ctx.now();
-          addWord.run(randomUUID(), appId, word, normalized, category, 1, now, now);
-        }
+    const now = ctx.now();
+    for (const { word, category } of entries) {
+      const normalized = normalizeText(word);
+      if (normalized && CATEGORIES.includes(category)) {
+        addWord.run(randomUUID(), appId, word, normalized, category, 1, now, now);
       }
     }
   });
+  return true;
+}
+
+export function provisionApps(ctx, appIds, options = {}) {
+  for (const appId of appIds) provisionApp(ctx, appId, options);
 }
 
 export function createKeywordMatcher(ctx) {
   const cache = new Map();
   return {
-    invalidate: appId => cache.delete(appId),
+    invalidate: appId => (appId === undefined ? cache.clear() : cache.delete(appId)),
     match(appId, text) {
       const time = new Date(ctx.now()).getTime();
       let entry = cache.get(appId);

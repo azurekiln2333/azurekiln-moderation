@@ -1,16 +1,50 @@
 import express from 'express';
 import { randomUUID } from 'node:crypto';
-import { authenticate, configureApps, requireAdmin } from './auth.js';
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { authenticate, requireAdmin } from './auth.js';
 import { openDatabase, migrate, migrateCore, transaction } from './db.js';
 import { cleanup, createAudit, registerAuditRoutes } from './audit.js';
 import { errorHandler, httpError } from './errors.js';
 import { assertObject, pagination, stringField } from './validation.js';
-import { provisionApps } from './text/keywords.js';
+import { provisionApp } from './text/keywords.js';
 import { registerTextRoutes } from './text/index.js';
 import { registerIpRoutes } from './ip/index.js';
+import { ensureSetupCode } from './admin-auth.js';
+import { initializeConfig, importLegacyApps } from './config/index.js';
+
+const ADMIN_ASSETS = fileURLToPath(new URL('../public/', import.meta.url));
+const SVG_ICON = 'data:image/svg+xml';
+
+function contentSecurityPolicy(res) {
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('Referrer-Policy', 'no-referrer');
+  res.set('X-Frame-Options', 'DENY');
+  res.set('Content-Security-Policy', [
+    "default-src 'self'",
+    `img-src 'self' ${SVG_ICON}`,
+    "style-src 'self'",
+    "script-src 'self'",
+    "connect-src 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+    "base-uri 'none'"
+  ].join('; '));
+}
+
+async function loadAdminModules() {
+  // B owns src/admin/. The directory may be absent while branches develop in parallel.
+  try {
+    return [await import('./admin/index.js')];
+  } catch (error) {
+    if (error?.code === 'ERR_MODULE_NOT_FOUND' && /\.\/admin\/|\.\.?\/src\/admin\/|admin\\index\.js|admin\/index\.js/.test(String(error.message))) {
+      return [];
+    }
+    throw error;
+  }
+}
 
 export async function createApp(options = {}) {
-  const apps = configureApps(options.apps ?? process.env.MODERATION_APPS_JSON);
   const db = openDatabase(options.dbPath ?? process.env.MODERATION_DB_PATH ?? './var/moderation.sqlite');
   let maintenance;
   let closed = false;
@@ -26,18 +60,25 @@ export async function createApp(options = {}) {
       db, now: () => clock().toISOString(), httpError, assertObject, stringField, pagination, requireAdmin,
       transaction: fn => transaction(db, fn),
       migrate: (namespace, migrations) => migrate(db, namespace, migrations, ctx.now),
-      cleanupHandlers: new Map(), imageProvider: options.imageProvider, regionResolver: options.regionResolver
+      cleanupHandlers: new Map(), imageProvider: options.imageProvider, regionResolver: options.regionResolver,
+      keyGraceMs: options.keyGraceMs, sessionTtlMs: options.sessionTtlMs, sessionIdleMs: options.sessionIdleMs,
+      secureCookies: options.secureCookies, publicOrigin: options.publicOrigin, log: options.log ?? console,
+      accessClock: options.accessClock
     };
     migrateCore(ctx);
     ctx.recordAudit = createAudit(ctx);
-    provisionApps(ctx, apps.keys(), { seed: options.seedKeywords !== false });
-    const modules = options.extensionModules ?? await Promise.all([
+    initializeConfig(ctx);
+    ctx.provisionKeywords = appId => provisionApp(ctx, appId, { seed: options.seedKeywords !== false });
+    const serviceModules = options.extensionModules ?? await Promise.all([
       import('./review/index.js'), import('./image/index.js'), import('./reports/index.js')
     ]);
-    for (const module of modules) module.initialize(ctx);
+    for (const module of serviceModules) module.initialize(ctx);
     if (!ctx.review || typeof ctx.review.enqueue !== 'function' || typeof ctx.review.requiresReview !== 'function') {
       throw new Error('Review extension is required');
     }
+    const adminModules = options.adminModules ?? await loadAdminModules();
+    for (const module of adminModules) module.initialize?.(ctx);
+
     const app = express();
     app.disable('x-powered-by');
     app.set('trust proxy', false);
@@ -53,7 +94,7 @@ export async function createApp(options = {}) {
       res.json({ status: 'ok' });
     });
     const router = express.Router();
-    app.use('/v1', authenticate(apps), (req, _res, next) => {
+    app.use('/v1', authenticate(ctx), (req, _res, next) => {
       if (['POST', 'PUT', 'PATCH'].includes(req.method) && !req.is('application/json')) {
         throw httpError(415, 'unsupported_media_type', 'Content-Type application/json required');
       }
@@ -62,17 +103,45 @@ export async function createApp(options = {}) {
     registerTextRoutes(router, ctx);
     registerIpRoutes(router, ctx);
     registerAuditRoutes(router, ctx);
-    for (const module of modules) module.registerRoutes(router, ctx);
+    for (const module of serviceModules) module.registerRoutes(router, ctx);
+
+    if (adminModules.length) {
+      const adminRouter = express.Router();
+      adminRouter.use((req, _res, next) => {
+        if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) && !req.is('application/json')) {
+          throw httpError(415, 'unsupported_media_type', 'Content-Type application/json required');
+        }
+        next();
+      }, express.json({ limit: '256kb', strict: true }));
+      for (const module of adminModules) module.registerRoutes(adminRouter, ctx);
+      app.use('/admin/api', adminRouter);
+      if (existsSync(ADMIN_ASSETS)) {
+        app.use('/admin', express.static(ADMIN_ASSETS, {
+          index: 'index.html', dotfiles: 'ignore', fallthrough: true, setHeaders: contentSecurityPolicy
+        }));
+      }
+    }
+
     app.use((_req, _res, next) => next(httpError(404, 'not_found', 'Route not found')));
     app.use(errorHandler);
     ctx.cleanup = () => cleanup(ctx);
     ctx.cleanup();
     maintenance = setInterval(() => {
-      try { ctx.cleanup(); } catch { console.error(JSON.stringify({ event: 'moderation.maintenance_failed' })); }
+      try {
+        ctx.appStore.expireGraceWindows();
+        ctx.cleanup();
+      } catch { (ctx.log ?? console).error(JSON.stringify({ event: 'moderation.maintenance_failed' })); }
     }, 3_600_000);
     maintenance.unref();
     app.locals.context = ctx;
     app.locals.close = close;
+
+    const legacy = 'apps' in options ? options.apps : process.env.MODERATION_APPS_JSON;
+    if (legacy !== undefined && legacy !== null && legacy !== '') {
+      importLegacyApps(ctx, legacy, { log: ctx.log });
+    }
+    const setup = ensureSetupCode(ctx);
+    ctx.setup = options.onSetupCode ? options.onSetupCode(setup) ?? setup : ctx.config.publishSetupCode(setup);
     return app;
   } catch (error) {
     close();
